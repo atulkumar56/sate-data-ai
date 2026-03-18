@@ -74,6 +74,9 @@ export default function App() {
   const [authMessage, setAuthMessage] = useState('');
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
+  const [signUpName, setSignUpName] = useState('');
   const [isResettingPassword, setIsResettingPassword] = useState(false);
 
   const [currentView, setCurrentView] = useState<ViewType>('Dashboard');
@@ -165,6 +168,40 @@ export default function App() {
     setAuthMessage('');
     try {
       await signInWithEmailAndPassword(auth, loginEmail, loginPassword);
+    } catch (error: any) {
+      setAuthError(error.message);
+    }
+  };
+
+  const handleSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthMessage('');
+    if (!signUpName) {
+      setAuthError('Please enter your name.');
+      return;
+    }
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, loginEmail, loginPassword);
+      const firebaseUser = userCredential.user;
+      
+      const userProfile: UserProfile = {
+        id: firebaseUser.uid,
+        email: loginEmail,
+        name: signUpName,
+        role: loginEmail === 'funnyatul3@gmail.com' ? 'Admin' : 'User',
+        permissions: {
+          canAddSale: true,
+          canViewPayments: true,
+          canAddPayments: true,
+          canViewDebtors: true,
+          canViewOldTractors: true,
+          canManageMaster: loginEmail === 'funnyatul3@gmail.com'
+        }
+      };
+      
+      await setDoc(doc(db, 'users', firebaseUser.uid), userProfile);
+      setUserProfile(userProfile);
     } catch (error: any) {
       setAuthError(error.message);
     }
@@ -2252,6 +2289,150 @@ export default function App() {
     );
   };
 
+  const renderLandingPage = () => {
+    return (
+      <div className="min-h-screen bg-[#f5f5f4] text-[#0a0a0a] font-sans selection:bg-blue-600 selection:text-white">
+        {/* Navbar */}
+        <nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-md border-b border-black/5 px-6 py-4">
+          <div className="max-w-7xl mx-auto flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="h-10 w-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-600/20">
+                <Building2 className="h-6 w-6 text-white" />
+              </div>
+              <span className="text-xl font-black tracking-tighter">SALES MS</span>
+            </div>
+            <div className="hidden md:flex items-center gap-8 text-sm font-bold uppercase tracking-widest text-slate-500">
+              <a href="#features" className="hover:text-blue-600 transition-colors">Features</a>
+              <a href="#about" className="hover:text-blue-600 transition-colors">About</a>
+              <a href="#contact" className="hover:text-blue-600 transition-colors">Contact</a>
+            </div>
+            <button 
+              onClick={() => setShowLogin(true)}
+              className="px-6 py-2.5 bg-black text-white rounded-full text-sm font-bold hover:bg-blue-600 transition-all shadow-xl shadow-black/10"
+            >
+              GET STARTED
+            </button>
+          </div>
+        </nav>
+
+        {/* Hero Section */}
+        <main className="pt-32 pb-20 px-6">
+          <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-20 items-center">
+            <div className="space-y-8">
+              <div className="inline-flex items-center gap-2 px-3 py-1 bg-blue-50 text-blue-600 rounded-full text-[10px] font-black uppercase tracking-widest">
+                <ShieldCheck className="h-3 w-3" />
+                Trusted by 500+ Dealers
+              </div>
+              <h1 className="text-7xl md:text-8xl font-black leading-[0.88] tracking-tighter">
+                MANAGE SALES <br />
+                <span className="text-blue-600">WITH PRECISION.</span>
+              </h1>
+              <p className="text-xl text-slate-500 max-w-lg leading-relaxed font-medium">
+                The ultimate management system for agricultural equipment dealers. Track sales, verify payments, and manage inventory with ease.
+              </p>
+              <div className="flex flex-col sm:flex-row items-center gap-4">
+                <button 
+                  onClick={() => setShowLogin(true)}
+                  className="w-full sm:w-auto px-10 py-5 bg-blue-600 text-white rounded-2xl font-black text-lg hover:bg-blue-700 transition-all shadow-2xl shadow-blue-600/30 flex items-center justify-center gap-3 group"
+                >
+                  START FREE TRIAL
+                  <ChevronRight className="h-5 w-5 group-hover:translate-x-1 transition-transform" />
+                </button>
+                <div className="flex -space-x-3">
+                  {[1,2,3,4].map(i => (
+                    <img 
+                      key={i}
+                      src={`https://picsum.photos/seed/user${i}/100/100`} 
+                      className="h-12 w-12 rounded-full border-4 border-[#f5f5f4] object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  ))}
+                  <div className="h-12 w-12 rounded-full border-4 border-[#f5f5f4] bg-slate-200 flex items-center justify-center text-xs font-bold">
+                    +2k
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="relative">
+              <div className="absolute -top-20 -right-20 w-64 h-64 bg-blue-600/10 rounded-full blur-3xl animate-pulse" />
+              <div className="absolute -bottom-20 -left-20 w-64 h-64 bg-emerald-600/10 rounded-full blur-3xl animate-pulse delay-700" />
+              <div className="relative bg-white p-4 rounded-[2.5rem] shadow-2xl border border-black/5 rotate-2 hover:rotate-0 transition-transform duration-500">
+                <div className="bg-slate-50 rounded-[2rem] p-8 space-y-6">
+                  <div className="flex items-center justify-between">
+                    <div className="h-10 w-10 bg-emerald-100 rounded-xl flex items-center justify-center">
+                      <HandCoins className="h-6 w-6 text-emerald-600" />
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Collection</p>
+                      <p className="text-2xl font-black">₹45,80,000</p>
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    {[1,2,3].map(i => (
+                      <div key={i} className="flex items-center justify-between p-3 bg-white rounded-xl border border-black/5">
+                        <div className="flex items-center gap-3">
+                          <div className="h-8 w-8 bg-slate-100 rounded-lg" />
+                          <div>
+                            <div className="h-2 w-20 bg-slate-200 rounded" />
+                            <div className="h-1.5 w-12 bg-slate-100 rounded mt-1" />
+                          </div>
+                        </div>
+                        <div className="h-2 w-10 bg-emerald-100 rounded" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </main>
+
+        {/* Features Section */}
+        <section id="features" className="py-32 px-6 bg-white">
+          <div className="max-w-7xl mx-auto space-y-20">
+            <div className="text-center space-y-4">
+              <h2 className="text-5xl font-black tracking-tighter">POWERFUL FEATURES.</h2>
+              <p className="text-slate-500 max-w-2xl mx-auto font-medium">Everything you need to run your dealership efficiently in one place.</p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+              {[
+                { icon: LayoutDashboard, title: "Real-time Dashboard", desc: "Get a bird's eye view of your entire sales operation instantly." },
+                { icon: ShieldCheck, title: "Admin Verification", desc: "Ensure data accuracy with a robust multi-level approval system." },
+                { icon: Wallet, title: "Payment Tracking", desc: "Monitor collections, pending dues, and finance payouts effortlessly." }
+              ].map((f, i) => (
+                <div key={i} className="p-10 bg-slate-50 rounded-[2rem] space-y-6 hover:bg-blue-600 hover:text-white transition-all group cursor-default">
+                  <div className="h-14 w-14 bg-white rounded-2xl flex items-center justify-center shadow-lg group-hover:bg-white/20">
+                    <f.icon className="h-8 w-8 text-blue-600 group-hover:text-white" />
+                  </div>
+                  <h3 className="text-2xl font-black tracking-tight">{f.title}</h3>
+                  <p className="text-slate-500 group-hover:text-blue-100 font-medium leading-relaxed">{f.desc}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* Footer */}
+        <footer className="py-20 px-6 border-t border-black/5">
+          <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-10">
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-8 bg-black rounded-lg flex items-center justify-center">
+                <Building2 className="h-5 w-5 text-white" />
+              </div>
+              <span className="text-lg font-black tracking-tighter">SALES MS</span>
+            </div>
+            <p className="text-slate-400 text-sm font-medium">© 2024 Sales Management System. All rights reserved.</p>
+            <div className="flex gap-6 text-sm font-bold text-slate-500">
+              <a href="#" className="hover:text-black transition-colors">Privacy</a>
+              <a href="#" className="hover:text-black transition-colors">Terms</a>
+            </div>
+          </div>
+        </footer>
+      </div>
+    );
+  };
+
   const renderContent = () => {
     switch (currentView) {
       case 'Dashboard': return renderDashboard();
@@ -2279,9 +2460,24 @@ export default function App() {
   }
 
   if (!user) {
+    if (!showLogin) {
+      return renderLandingPage();
+    }
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-        <div className="max-w-md w-full bg-white rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 relative overflow-hidden">
+        {/* Background Accents */}
+        <div className="absolute top-0 left-0 w-full h-full">
+          <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-blue-600/20 rounded-full blur-[120px]" />
+          <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-emerald-600/20 rounded-full blur-[120px]" />
+        </div>
+
+        <div className="max-w-md w-full bg-white rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300 relative z-10">
+          <button 
+            onClick={() => setShowLogin(false)}
+            className="absolute top-4 right-4 h-8 w-8 bg-slate-100 rounded-full flex items-center justify-center hover:bg-slate-200 transition-colors"
+          >
+            <X className="h-4 w-4 text-slate-500" />
+          </button>
           <div className="p-8 bg-blue-600 text-white text-center space-y-2">
             <div className="h-16 w-16 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-4 backdrop-blur-md">
               <Building2 className="h-8 w-8 text-white" />
@@ -2290,7 +2486,30 @@ export default function App() {
             <p className="text-blue-100 text-sm">Agricultural Equipment Management System</p>
           </div>
           
-          <form onSubmit={handleLogin} className="p-8 space-y-6">
+          <form onSubmit={isSignUp ? handleSignUp : handleLogin} className="p-8 space-y-6">
+            <div className="flex border-b border-slate-100 mb-6">
+              <button
+                type="button"
+                onClick={() => { setIsSignUp(false); setAuthError(''); setAuthMessage(''); }}
+                className={cn(
+                  "flex-1 py-3 text-sm font-bold transition-all",
+                  !isSignUp ? "text-blue-600 border-b-2 border-blue-600" : "text-slate-400 hover:text-slate-600"
+                )}
+              >
+                Sign In
+              </button>
+              <button
+                type="button"
+                onClick={() => { setIsSignUp(true); setAuthError(''); setAuthMessage(''); }}
+                className={cn(
+                  "flex-1 py-3 text-sm font-bold transition-all",
+                  isSignUp ? "text-blue-600 border-b-2 border-blue-600" : "text-slate-400 hover:text-slate-600"
+                )}
+              >
+                Sign Up
+              </button>
+            </div>
+
             {(authError || authMessage) && (
               <div className={cn(
                 "p-3 border text-xs rounded-lg flex items-center gap-2 animate-in slide-in-from-top-2",
@@ -2302,6 +2521,23 @@ export default function App() {
             )}
             
             <div className="space-y-4">
+              {isSignUp && (
+                <div className="space-y-1 animate-in slide-in-from-top-2">
+                  <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2">
+                    <UserIcon className="h-3 w-3" />
+                    Full Name
+                  </label>
+                  <input 
+                    type="text" 
+                    required
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                    placeholder="John Doe"
+                    value={signUpName}
+                    onChange={(e) => setSignUpName(e.target.value)}
+                  />
+                </div>
+              )}
+              
               <div className="space-y-1">
                 <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2">
                   <Mail className="h-3 w-3" />
@@ -2323,13 +2559,15 @@ export default function App() {
                     <Lock className="h-3 w-3" />
                     Password
                   </label>
-                  <button 
-                    type="button"
-                    onClick={handleForgotPassword}
-                    className="text-[10px] font-bold text-blue-600 hover:underline"
-                  >
-                    Forgot Password?
-                  </button>
+                  {!isSignUp && (
+                    <button 
+                      type="button"
+                      onClick={handleForgotPassword}
+                      className="text-[10px] font-bold text-blue-600 hover:underline"
+                    >
+                      Forgot Password?
+                    </button>
+                  )}
                 </div>
                 <input 
                   type="password" 
@@ -2346,7 +2584,7 @@ export default function App() {
               type="submit"
               className="w-full py-4 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-600/20 flex items-center justify-center gap-2 group"
             >
-              Sign In
+              {isSignUp ? 'Create Account' : 'Sign In'}
               <ChevronRight className="h-4 w-4 group-hover:translate-x-1 transition-transform" />
             </button>
             
