@@ -1,0 +1,33 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Stores user information, roles, and permissions.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique ID of the user (Firebase UID)." },
+        "email": { "type": "string", "format": "email", "description": "User's email address." },
+        "name": { "type": "string", "description": "User's full name." },
+        "role": { "type": "string", "enum": ["Admin", "User"], "description": "User's role in the system." },
+        "permissions": {
+          "type": "object",
+          "properties": {
+            "canAddSale": { "type": "boolean" },
+            "canViewPayments": { "type": "boolean" },
+            "canAddPayments: { "type": "boolean" },
+            "canViewDebtors": { "type": "boolean" },
+            "canViewOldTractors": { "type": "boolean" },
+            "canManageMaster": { "type": "boolean" }
+          }
+        }
+      },
+      "required": ["id", "email", "name", "role", "permissions"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Collection of user profiles."
+    }
+  }
+}

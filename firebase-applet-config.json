@@ -1,0 +1,10 @@
+{
+  "projectId": "taskpro-manager",
+  "appId": "1:493501837579:web:0aff45bf6e2d97e061720e",
+  "apiKey": "AIzaSyDf8d4wOtADdrYPC67z4c2LshUZOAiNUQY",
+  "authDomain": "taskpro-manager.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-46508246-a2b0-43fb-9afb-8f974060f15f",
+  "storageBucket": "taskpro-manager.firebasestorage.app",
+  "messagingSenderId": "493501837579",
+  "measurementId": ""
+}

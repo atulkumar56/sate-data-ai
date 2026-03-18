@@ -85,7 +85,9 @@ export const MOCK_SALES: Sale[] = [
     receivedAmount: 50000,
     remark: 'First order',
     date: '2024-03-01',
-    status: 'Pending'
+    status: 'Pending',
+    verificationStatus: 'Approved',
+    createdBy: 'system'
   },
   {
     id: '2',
@@ -108,7 +110,9 @@ export const MOCK_SALES: Sale[] = [
     remark: 'Exchange deal',
     date: '2024-03-05',
     deliveryDate: '2024-03-06',
-    status: 'Delivered'
+    status: 'Delivered',
+    verificationStatus: 'Approved',
+    createdBy: 'system'
   },
   {
     id: '3',
@@ -131,6 +135,8 @@ export const MOCK_SALES: Sale[] = [
     remark: 'Full payment',
     date: '2024-03-07',
     deliveryDate: '2024-03-08',
-    status: 'Paid'
+    status: 'Paid',
+    verificationStatus: 'Approved',
+    createdBy: 'system'
   }
 ];

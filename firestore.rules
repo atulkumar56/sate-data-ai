@@ -1,0 +1,72 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: userId (Firebase UID)
+    // Fields:
+    //   - id: string (required) - User's UID
+    //   - email: string (required) - User's email
+    //   - name: string (required) - User's full name
+    //   - role: string (required, enum: ['Admin', 'User']) - User's role
+    //   - permissions: map (required) - User's granular permissions
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "funnyatul3@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['id', 'email', 'name', 'role', 'permissions']) &&
+             data.id is string && data.id.size() > 0 &&
+             data.email is string && data.email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$") &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.role in ['Admin', 'User'] &&
+             data.permissions is map;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      // Users can read their own profile. Admins can read all profiles.
+      allow read: if isOwner(userId) || isAdmin();
+      
+      // First user (Admin) can be created by themselves if it's the default admin email.
+      // Other users can only be created by Admins.
+      allow create: if (isOwner(userId) && request.auth.token.email == "funnyatul3@gmail.com" && isValidUser(request.resource.data)) || isAdmin();
+      
+      // Users can update their own basic info (name), but not their role or permissions.
+      // Admins can update everything.
+      allow update: if isAdmin() || (isOwner(userId) && 
+                                     isValidUser(request.resource.data) && 
+                                     request.resource.data.role == resource.data.role &&
+                                     request.resource.data.permissions == resource.data.permissions);
+    }
+
+    // Default deny
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

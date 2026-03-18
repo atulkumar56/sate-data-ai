@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   LayoutDashboard, 
   TableProperties, 
@@ -17,7 +17,14 @@ import {
   Pencil,
   Download,
   History,
-  Calendar
+  Calendar,
+  LogIn,
+  LogOut,
+  ShieldCheck,
+  UserPlus,
+  Lock,
+  Mail,
+  User as UserIcon
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -33,14 +40,42 @@ import {
   Pie, 
   Cell 
 } from 'recharts';
+import { auth, db } from './firebase';
+import { 
+  onAuthStateChanged, 
+  signInWithEmailAndPassword, 
+  signOut, 
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
+  User as FirebaseUser
+} from 'firebase/auth';
+import { 
+  doc, 
+  getDoc, 
+  setDoc, 
+  collection, 
+  onSnapshot, 
+  query, 
+  where,
+  getDocs
+} from 'firebase/firestore';
 import { MOCK_SALES, MOCK_BRANCH_MANAGERS, MOCK_DEAL_PERSONS, MOCK_PRODUCTS, MOCK_FINANCE_COMPANIES, MOCK_CASE_TYPES } from './constants';
-import { Sale, ViewType, MasterItem, ProductMaster, SelectedProduct, Payment } from './types';
+import { Sale, ViewType, MasterItem, ProductMaster, SelectedProduct, Payment, UserProfile } from './types';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
 export default function App() {
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [authError, setAuthError] = useState('');
+  const [authMessage, setAuthMessage] = useState('');
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
+
   const [currentView, setCurrentView] = useState<ViewType>('Dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [sales, setSales] = useState<Sale[]>(MOCK_SALES);
@@ -53,6 +88,7 @@ export default function App() {
   const [financeCompanies, setFinanceCompanies] = useState<MasterItem[]>(MOCK_FINANCE_COMPANIES);
   const [caseTypes, setCaseTypes] = useState<MasterItem[]>(MOCK_CASE_TYPES);
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
   
   // Modal States
   const [isAddSaleModalOpen, setIsAddSaleModalOpen] = useState(false);
@@ -60,6 +96,292 @@ export default function App() {
   const [isDeliveryModalOpen, setIsDeliveryModalOpen] = useState(false);
   const [isOldTractorModalOpen, setIsOldTractorModalOpen] = useState(false);
   const [isFollowUpModalOpen, setIsFollowUpModalOpen] = useState(false);
+  const [isAddUserModalOpen, setIsAddUserModalOpen] = useState(false);
+  
+  const [newUser, setNewUser] = useState({
+    name: '',
+    email: '',
+    password: '',
+    role: 'User' as 'Admin' | 'User',
+    permissions: {
+      canAddSale: true,
+      canViewPayments: true,
+      canAddPayments: true,
+      canViewDebtors: true,
+      canViewOldTractors: true,
+      canManageMaster: false
+    }
+  });
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      setUser(firebaseUser);
+      if (firebaseUser) {
+        const docRef = doc(db, 'users', firebaseUser.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          setUserProfile(docSnap.data() as UserProfile);
+        } else {
+          // Default profile for first user (Admin)
+          const defaultProfile: UserProfile = {
+            id: firebaseUser.uid,
+            email: firebaseUser.email || '',
+            name: firebaseUser.displayName || 'Admin',
+            role: 'Admin',
+            permissions: {
+              canAddSale: true,
+              canViewPayments: true,
+              canAddPayments: true,
+              canViewDebtors: true,
+              canViewOldTractors: true,
+              canManageMaster: true
+            }
+          };
+          await setDoc(docRef, defaultProfile);
+          setUserProfile(defaultProfile);
+        }
+      } else {
+        setUserProfile(null);
+      }
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (userProfile?.role === 'Admin') {
+      const unsubscribe = onSnapshot(collection(db, 'users'), (snapshot) => {
+        const usersData = snapshot.docs.map(doc => doc.data() as UserProfile);
+        setAllUsers(usersData);
+      });
+      return () => unsubscribe();
+    }
+  }, [userProfile]);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthMessage('');
+    try {
+      await signInWithEmailAndPassword(auth, loginEmail, loginPassword);
+    } catch (error: any) {
+      setAuthError(error.message);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!loginEmail) {
+      setAuthError('Please enter your email address first.');
+      return;
+    }
+    setAuthError('');
+    setAuthMessage('');
+    try {
+      await sendPasswordResetEmail(auth, loginEmail);
+      setAuthMessage('Password reset email sent! Please check your inbox.');
+    } catch (error: any) {
+      setAuthError(error.message);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (error: any) {
+      console.error(error.message);
+    }
+  };
+
+  const handleAddSale = () => {
+    if (!newSale.customerName || !newSale.branchManager) return;
+
+    const dueDate = newSale.dueDate || calculateDueDate(newSale.date || new Date().toISOString().split('T')[0]);
+    const saleData: Sale = {
+      ...(newSale as Sale),
+      id: editingSaleId || Math.random().toString(36).substr(2, 9),
+      status: newSale.status || 'Pending',
+      date: newSale.date || new Date().toISOString().split('T')[0],
+      dueDate,
+      verificationStatus: userProfile?.role === 'Admin' ? 'Approved' : 'Pending',
+      createdBy: user?.uid || 'system',
+      amount: Number(newSale.amount) || 0,
+      exchangeAmount: Number(newSale.exchangeAmount) || 0,
+      financeAmount: Number(newSale.financeAmount) || 0,
+      financeReceived: Number(newSale.financeReceived) || 0,
+      receivedAmount: Number(newSale.receivedAmount) || 0,
+    };
+
+    if (editingSaleId) {
+      setSales(sales.map(s => s.id === editingSaleId ? saleData : s));
+    } else {
+      setSales([saleData, ...sales]);
+      if (userProfile?.role !== 'Admin') {
+        setAuthMessage('Sale added and sent for Admin verification.');
+        setTimeout(() => setAuthMessage(''), 5000);
+      }
+    }
+
+    setIsAddSaleModalOpen(false);
+    setEditingSaleId(null);
+    setNewSale({
+      branchManager: '',
+      dealPerson: '',
+      customerName: '',
+      mobile: '',
+      address: '',
+      selectedProducts: [],
+      case: '',
+      finance: false,
+      financeCompany: '',
+      amount: 0,
+      exchange: false,
+      exchangeModel: '',
+      exchangeAmount: 0,
+      financeAmount: 0,
+      financeReceived: 0,
+      receivedAmount: 0,
+      remark: '',
+      status: 'Pending',
+      date: new Date().toISOString().split('T')[0],
+      dueDate: ''
+    });
+  };
+
+  const handleAddOldTractorSale = () => {
+    if (!newOldTractorSale.customerName || !newOldTractorSale.exchangeModel) return;
+
+    const dueDate = newOldTractorSale.dueDate || calculateDueDate(newOldTractorSale.date || new Date().toISOString().split('T')[0]);
+    const saleData: Sale = {
+      ...(newOldTractorSale as Sale),
+      id: Math.random().toString(36).substr(2, 9),
+      isOldTractorSale: true,
+      status: 'Pending',
+      date: newOldTractorSale.date || new Date().toISOString().split('T')[0],
+      dueDate,
+      verificationStatus: userProfile?.role === 'Admin' ? 'Approved' : 'Pending',
+      createdBy: user?.uid || 'system',
+      amount: Number(newOldTractorSale.amount) || 0,
+      receivedAmount: 0,
+      exchange: false,
+      selectedProducts: [],
+      finance: false,
+      financeAmount: 0,
+      financeReceived: 0,
+      exchangeAmount: 0,
+      exchangeModel: newOldTractorSale.exchangeModel || '',
+    };
+
+    setSales([saleData, ...sales]);
+    if (userProfile?.role !== 'Admin') {
+      setAuthMessage('Old tractor data added and sent for Admin verification.');
+      setTimeout(() => setAuthMessage(''), 5000);
+    }
+    setIsOldTractorModalOpen(false);
+    setNewOldTractorSale({
+      branchManager: '',
+      dealPerson: '',
+      customerName: '',
+      mobile: '',
+      address: '',
+      exchangeModel: '',
+      amount: 0,
+      remark: '',
+      isOldTractorSale: true,
+      status: 'Pending',
+      date: new Date().toISOString().split('T')[0],
+      dueDate: ''
+    });
+  };
+
+  const handleAddPayment = () => {
+    if (!newPayment.amount || !newPayment.saleId) return;
+
+    const paymentData: Payment = {
+      ...(newPayment as Payment),
+      id: Math.random().toString(36).substr(2, 9),
+      date: newPayment.date || new Date().toISOString().split('T')[0],
+      verificationStatus: userProfile?.role === 'Admin' ? 'Approved' : 'Pending',
+      createdBy: user?.uid || 'system',
+      amount: Number(newPayment.amount) || 0,
+    };
+
+    setPayments([paymentData, ...payments]);
+    if (userProfile?.role !== 'Admin') {
+      setAuthMessage('Payment added and sent for Admin verification.');
+      setTimeout(() => setAuthMessage(''), 5000);
+    }
+    setIsPaymentModalOpen(false);
+    setNewPayment({
+      saleId: '',
+      customerName: '',
+      amount: 0,
+      date: new Date().toISOString().split('T')[0],
+      mode: 'Cash',
+      type: 'Customer',
+      remark: ''
+    });
+  };
+
+  const handleApprove = (type: 'Sale' | 'Payment', id: string) => {
+    if (type === 'Sale') {
+      setSales(sales.map(s => s.id === id ? { ...s, verificationStatus: 'Approved', verifiedBy: user?.uid } : s));
+    } else {
+      setPayments(payments.map(p => p.id === id ? { ...p, verificationStatus: 'Approved', verifiedBy: user?.uid } : p));
+    }
+  };
+
+  const handleReject = (type: 'Sale' | 'Payment', id: string) => {
+    if (type === 'Sale') {
+      setSales(sales.map(s => s.id === id ? { ...s, verificationStatus: 'Rejected', verifiedBy: user?.uid } : s));
+    } else {
+      setPayments(payments.map(p => p.id === id ? { ...p, verificationStatus: 'Rejected', verifiedBy: user?.uid } : p));
+    }
+  };
+
+  const handleAddUser = async () => {
+    try {
+      // Note: In a real app, you'd use a Cloud Function to create users to avoid logging out the current admin.
+      // For this demo, we'll simulate adding to Firestore.
+      const tempId = Math.random().toString(36).substr(2, 9);
+      const userToCreate: UserProfile = {
+        id: tempId,
+        email: newUser.email,
+        name: newUser.name,
+        role: newUser.role,
+        permissions: newUser.permissions
+      };
+      await setDoc(doc(db, 'users', tempId), userToCreate);
+      setIsAddUserModalOpen(false);
+      setNewUser({
+        name: '',
+        email: '',
+        password: '',
+        role: 'User',
+        permissions: {
+          canAddSale: true,
+          canViewPayments: true,
+          canAddPayments: true,
+          canViewDebtors: true,
+          canViewOldTractors: true,
+          canManageMaster: false
+        }
+      });
+    } catch (error: any) {
+      alert(error.message);
+    }
+  };
+
+  const togglePermission = (userId: string, permission: keyof UserProfile['permissions']) => {
+    const targetUser = allUsers.find(u => u.id === userId);
+    if (targetUser) {
+      const updatedPermissions = {
+        ...targetUser.permissions,
+        [permission]: !targetUser.permissions[permission]
+      };
+      setDoc(doc(db, 'users', userId), { ...targetUser, permissions: updatedPermissions });
+    }
+  };
   const [followUpData, setFollowUpData] = useState<{ saleId: string; date: string; remark: string }>({ saleId: '', date: '', remark: '' });
   const [oldTractorSearchTerm, setOldTractorSearchTerm] = useState('');
   const [oldTractorDateFilter, setOldTractorDateFilter] = useState({ start: '', end: '' });
@@ -134,19 +456,30 @@ export default function App() {
   const [newModel, setNewModel] = useState<{ productId: string; name: string }>({ productId: '', name: '' });
 
   const menuItems = [
-    { name: 'Dashboard' as ViewType, icon: LayoutDashboard },
-    { name: 'Sale Data' as ViewType, icon: TableProperties },
-    { name: 'Delivered Data' as ViewType, icon: Truck },
-    { name: 'Debtor List' as ViewType, icon: Users },
-    { name: 'Payment Received' as ViewType, icon: HandCoins },
-    { name: 'Old Tractor Data' as ViewType, icon: History },
-    { name: 'Master' as ViewType, icon: Settings },
-  ];
+    { name: 'Dashboard' as ViewType, icon: LayoutDashboard, show: true },
+    { name: 'Sale Data' as ViewType, icon: TableProperties, show: true },
+    { name: 'Delivered Data' as ViewType, icon: Truck, show: true },
+    { name: 'Debtor List' as ViewType, icon: Users, show: userProfile?.permissions.canViewDebtors },
+    { name: 'Payment Received' as ViewType, icon: HandCoins, show: userProfile?.permissions.canViewPayments },
+    { name: 'Old Tractor Data' as ViewType, icon: History, show: userProfile?.permissions.canViewOldTractors },
+    { name: 'Approvals' as ViewType, icon: ShieldCheck, show: userProfile?.role === 'Admin', badge: sales.filter(s => s.verificationStatus === 'Pending').length + payments.filter(p => p.verificationStatus === 'Pending').length },
+    { name: 'Master' as ViewType, icon: Settings, show: userProfile?.permissions.canManageMaster },
+    { name: 'Users' as ViewType, icon: ShieldCheck, show: userProfile?.role === 'Admin' },
+  ].filter(item => item.show);
 
   const filteredSales = sales.filter(sale => 
-    sale.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    sale.mobile.includes(searchTerm) ||
-    sale.branchManager.toLowerCase().includes(searchTerm.toLowerCase())
+    sale.verificationStatus === 'Approved' && (
+      sale.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      sale.mobile.includes(searchTerm) ||
+      sale.branchManager.toLowerCase().includes(searchTerm.toLowerCase())
+    )
+  );
+
+  const filteredPayments = payments.filter(payment => 
+    payment.verificationStatus === 'Approved' && (
+      payment.customerName.toLowerCase().includes(paymentSearchTerm.toLowerCase()) ||
+      payment.mode.toLowerCase().includes(paymentSearchTerm.toLowerCase())
+    )
   );
 
   const handleExport = (data: any[], fileName: string) => {
@@ -172,84 +505,17 @@ export default function App() {
     document.body.removeChild(link);
   };
 
-  const handleAddSale = () => {
-    const dueDate = newSale.dueDate || calculateDueDate(newSale.date || new Date().toISOString().split('T')[0]);
-    if (editingSaleId) {
-      setSales(sales.map(s => s.id === editingSaleId ? { ...s, ...newSale, dueDate } as Sale : s));
-    } else {
-      const sale: Sale = {
-        ...newSale as Sale,
-        id: Math.random().toString(36).substr(2, 9),
-        dueDate,
-      };
-      setSales([sale, ...sales]);
-    }
-    setIsAddSaleModalOpen(false);
-    setEditingSaleId(null);
-    setNewSale({
-      branchManager: '',
-      dealPerson: '',
-      customerName: '',
-      mobile: '',
-      address: '',
-      selectedProducts: [],
-      case: '',
-      finance: false,
-      financeCompany: '',
-      amount: 0,
-      exchange: false,
-      exchangeModel: '',
-      exchangeAmount: 0,
-      financeAmount: 0,
-      financeReceived: 0,
-      receivedAmount: 0,
-      remark: '',
-      status: 'Pending',
-      date: new Date().toISOString().split('T')[0],
-      dueDate: ''
-    });
-  };
-
-  const handleAddOldTractorSale = () => {
-    const dueDate = newOldTractorSale.dueDate || calculateDueDate(newOldTractorSale.date || new Date().toISOString().split('T')[0]);
-    const sale: Sale = {
-      ...newOldTractorSale as Sale,
-      id: Math.random().toString(36).substr(2, 9),
-      exchange: false,
-      selectedProducts: [],
-      finance: false,
-      financeAmount: 0,
-      financeReceived: 0,
-      receivedAmount: 0,
-      exchangeAmount: 0,
-      exchangeModel: newOldTractorSale.exchangeModel || '',
-      dueDate,
-    };
-    setSales([sale, ...sales]);
-    setIsOldTractorModalOpen(false);
-    setNewOldTractorSale({
-      branchManager: '',
-      dealPerson: '',
-      customerName: '',
-      mobile: '',
-      address: '',
-      exchangeModel: '',
-      amount: 0,
-      remark: '',
-      isOldTractorSale: true,
-      status: 'Pending',
-      date: new Date().toISOString().split('T')[0],
-      dueDate: ''
-    });
-  };
-
   const handleDeleteSale = (id: string) => {
-    if (window.confirm('Are you sure you want to delete this sale?')) {
-      setSales(sales.filter(s => s.id !== id));
-    }
+    setSales(sales.filter(s => s.id !== id));
   };
 
   const handleDelivery = (id: string) => {
+    const sale = sales.find(s => s.id === id);
+    if (sale?.verificationStatus !== 'Approved') {
+      setAuthError('Only approved sales can be marked as delivered.');
+      setTimeout(() => setAuthError(''), 3000);
+      return;
+    }
     setDeliverySaleId(id);
     setDeliveryDateInput(new Date().toISOString().split('T')[0]);
     setIsDeliveryModalOpen(true);
@@ -551,13 +817,16 @@ export default function App() {
   };
 
   const renderDashboard = () => {
-    const totalSales = sales.reduce((acc, sale) => acc + sale.amount, 0);
-    const totalCollection = payments.reduce((acc, p) => acc + p.amount, 0);
-    const cashCollection = payments.filter(p => p.mode === 'Cash').reduce((acc, p) => acc + p.amount, 0);
-    const bankCollection = payments.filter(p => p.mode === 'Bank').reduce((acc, p) => acc + p.amount, 0);
+    const approvedSales = sales.filter(s => s.verificationStatus === 'Approved');
+    const approvedPayments = payments.filter(p => p.verificationStatus === 'Approved');
+
+    const totalSales = approvedSales.reduce((acc, sale) => acc + sale.amount, 0);
+    const totalCollection = approvedPayments.reduce((acc, p) => acc + p.amount, 0);
+    const cashCollection = approvedPayments.filter(p => p.mode === 'Cash').reduce((acc, p) => acc + p.amount, 0);
+    const bankCollection = approvedPayments.filter(p => p.mode === 'Bank').reduce((acc, p) => acc + p.amount, 0);
     
     const today = new Date();
-    const overdueSales = sales.filter(s => {
+    const overdueSales = approvedSales.filter(s => {
       const balance = s.amount - (s.receivedAmount || 0) - (s.financeReceived || 0);
       if (balance <= 0) return false;
       if (!s.dueDate) return false;
@@ -565,10 +834,10 @@ export default function App() {
     });
 
     // Old Tractor Stats
-    const exchangedTractors = sales.filter(s => s.exchange);
-    const soldOldTractors = sales.filter(s => s.isOldTractorSale);
-    const oldTractorReceived = payments.filter(p => {
-      const sale = sales.find(s => s.id === p.saleId);
+    const exchangedTractors = approvedSales.filter(s => s.exchange);
+    const soldOldTractors = approvedSales.filter(s => s.isOldTractorSale);
+    const oldTractorReceived = approvedPayments.filter(p => {
+      const sale = approvedSales.find(s => s.id === p.saleId);
       return sale?.isOldTractorSale;
     }).reduce((acc, p) => acc + p.amount, 0);
     const oldTractorTotalAmount = soldOldTractors.reduce((acc, s) => acc + s.amount, 0);
@@ -1349,8 +1618,8 @@ export default function App() {
 
   const renderPaymentReceived = () => {
     if (selectedLedgerCustomer) {
-      const customerSales = sales.filter(s => s.customerName === selectedLedgerCustomer);
-      const customerPayments = payments.filter(p => p.customerName === selectedLedgerCustomer);
+      const customerSales = sales.filter(s => s.customerName === selectedLedgerCustomer && s.verificationStatus === 'Approved');
+      const customerPayments = payments.filter(p => p.customerName === selectedLedgerCustomer && p.verificationStatus === 'Approved');
       
       const totalSaleAmount = customerSales.reduce((acc, s) => acc + s.amount, 0);
       const totalPaidAmount = customerPayments.reduce((acc, p) => acc + p.amount, 0);
@@ -1449,7 +1718,7 @@ export default function App() {
       );
     }
 
-    const filteredPayments = payments.filter(p => {
+    const filteredPayments = payments.filter(p => p.verificationStatus === 'Approved').filter(p => {
       const matchesSearch = p.customerName.toLowerCase().includes(paymentSearchTerm.toLowerCase()) ||
         (p.remark && p.remark.toLowerCase().includes(paymentSearchTerm.toLowerCase()));
       
@@ -1464,7 +1733,7 @@ export default function App() {
     });
 
     // Get unique customers from sales for the ledger search
-    const uniqueCustomers: string[] = Array.from(new Set(sales.map(s => s.customerName)));
+    const uniqueCustomers: string[] = Array.from(new Set(sales.filter(s => s.verificationStatus === 'Approved').map(s => s.customerName)));
     const searchResults = paymentSearchTerm.length > 0 
       ? uniqueCustomers.filter((c: string) => c.toLowerCase().includes(paymentSearchTerm.toLowerCase()))
       : [];
@@ -1637,7 +1906,7 @@ export default function App() {
   };
 
   const renderOldTractorData = () => {
-    const oldTractorSales = sales.filter(s => (s.exchange || s.isOldTractorSale)).filter(sale => {
+    const oldTractorSales = sales.filter(s => (s.exchange || s.isOldTractorSale) && s.verificationStatus === 'Approved').filter(sale => {
       const matchesSearch = 
         sale.customerName.toLowerCase().includes(oldTractorSearchTerm.toLowerCase()) ||
         sale.exchangeModel.toLowerCase().includes(oldTractorSearchTerm.toLowerCase()) ||
@@ -1823,6 +2092,166 @@ export default function App() {
     );
   };
 
+  const renderUsersView = () => {
+    return (
+      <div className="space-y-6 animate-in fade-in duration-500">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-bold text-slate-900">User Management</h3>
+          <button 
+            onClick={() => setIsAddUserModalOpen(true)}
+            className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
+          >
+            <UserPlus className="h-4 w-4" />
+            Add New User
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {allUsers.map(u => (
+            <div key={u.id} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-lg">
+                  {u.name.charAt(0)}
+                </div>
+                <div>
+                  <h4 className="font-bold text-slate-900">{u.name}</h4>
+                  <p className="text-xs text-slate-500">{u.email}</p>
+                </div>
+                <div className={cn(
+                  "ml-auto px-2 py-1 rounded-md text-[10px] font-bold uppercase",
+                  u.role === 'Admin' ? "bg-purple-100 text-purple-600" : "bg-blue-100 text-blue-600"
+                )}>
+                  {u.role}
+                </div>
+              </div>
+
+              <div className="space-y-2 pt-2 border-t border-slate-50">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Permissions</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {Object.entries(u.permissions).map(([key, value]) => (
+                    <button
+                      key={key}
+                      onClick={() => togglePermission(u.id, key as keyof UserProfile['permissions'])}
+                      disabled={u.role === 'Admin'}
+                      className={cn(
+                        "flex items-center justify-between px-3 py-2 rounded-lg text-[10px] font-medium transition-all border",
+                        value 
+                          ? "bg-emerald-50 border-emerald-100 text-emerald-700" 
+                          : "bg-slate-50 border-slate-100 text-slate-400"
+                      )}
+                    >
+                      {key.replace('can', '').replace(/([A-Z])/g, ' $1').trim()}
+                      <div className={cn(
+                        "h-1.5 w-1.5 rounded-full",
+                        value ? "bg-emerald-500" : "bg-slate-300"
+                      )} />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const renderApprovalsView = () => {
+    const pendingSales = sales.filter(s => s.verificationStatus === 'Pending');
+    const pendingPayments = payments.filter(p => p.verificationStatus === 'Pending');
+
+    return (
+      <div className="space-y-8 animate-in fade-in duration-500">
+        <section className="space-y-4">
+          <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+            <TableProperties className="h-5 w-5 text-blue-600" />
+            Pending Sales ({pendingSales.length})
+          </h3>
+          <div className="grid grid-cols-1 gap-4">
+            {pendingSales.map(sale => (
+              <div key={sale.id} className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded uppercase">{sale.isOldTractorSale ? 'Old Tractor' : 'New Sale'}</span>
+                    <span className="text-xs text-slate-400">{sale.date}</span>
+                  </div>
+                  <h4 className="font-bold text-slate-900">{sale.customerName}</h4>
+                  <p className="text-xs text-slate-500">{sale.branchManager} • ₹{sale.amount.toLocaleString()}</p>
+                </div>
+                <div className="flex items-center gap-2 w-full md:w-auto">
+                  <button 
+                    onClick={() => {
+                      if (sale.isOldTractorSale) {
+                        setNewOldTractorSale(sale);
+                        setIsOldTractorModalOpen(true);
+                      } else {
+                        setNewSale(sale);
+                        setEditingSaleId(sale.id);
+                        setIsAddSaleModalOpen(true);
+                      }
+                    }}
+                    className="flex-1 md:flex-none px-4 py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-50"
+                  >
+                    Edit
+                  </button>
+                  <button 
+                    onClick={() => handleReject('Sale', sale.id)}
+                    className="flex-1 md:flex-none px-4 py-2 bg-red-50 text-red-600 rounded-lg text-xs font-bold hover:bg-red-600 hover:text-white"
+                  >
+                    Reject
+                  </button>
+                  <button 
+                    onClick={() => handleApprove('Sale', sale.id)}
+                    className="flex-1 md:flex-none px-4 py-2 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 shadow-lg shadow-emerald-600/20"
+                  >
+                    Approve
+                  </button>
+                </div>
+              </div>
+            ))}
+            {pendingSales.length === 0 && <p className="text-sm text-slate-400 italic text-center py-8">No pending sales to verify.</p>}
+          </div>
+        </section>
+
+        <section className="space-y-4">
+          <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+            <HandCoins className="h-5 w-5 text-emerald-600" />
+            Pending Payments ({pendingPayments.length})
+          </h3>
+          <div className="grid grid-cols-1 gap-4">
+            {pendingPayments.map(payment => (
+              <div key={payment.id} className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded uppercase">{payment.mode}</span>
+                    <span className="text-xs text-slate-400">{payment.date}</span>
+                  </div>
+                  <h4 className="font-bold text-slate-900">{payment.customerName}</h4>
+                  <p className="text-xs text-slate-500">Amount: ₹{payment.amount.toLocaleString()} • {payment.type}</p>
+                </div>
+                <div className="flex items-center gap-2 w-full md:w-auto">
+                  <button 
+                    onClick={() => handleReject('Payment', payment.id)}
+                    className="flex-1 md:flex-none px-4 py-2 bg-red-50 text-red-600 rounded-lg text-xs font-bold hover:bg-red-600 hover:text-white"
+                  >
+                    Reject
+                  </button>
+                  <button 
+                    onClick={() => handleApprove('Payment', payment.id)}
+                    className="flex-1 md:flex-none px-4 py-2 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 shadow-lg shadow-emerald-600/20"
+                  >
+                    Approve
+                  </button>
+                </div>
+              </div>
+            ))}
+            {pendingPayments.length === 0 && <p className="text-sm text-slate-400 italic text-center py-8">No pending payments to verify.</p>}
+          </div>
+        </section>
+      </div>
+    );
+  };
+
   const renderContent = () => {
     switch (currentView) {
       case 'Dashboard': return renderDashboard();
@@ -1832,20 +2261,109 @@ export default function App() {
       case 'Payment Received': return renderPaymentReceived();
       case 'Old Tractor Data': return renderOldTractorData();
       case 'Master': return renderMasterView();
-      default: return (
-        <div className="flex flex-col items-center justify-center h-64 bg-white rounded-xl border border-dashed border-slate-300 text-slate-400">
-          <p className="text-lg font-medium">{currentView} Page</p>
-          <p className="text-sm">This section is currently under development.</p>
-        </div>
-      );
+      case 'Users': return renderUsersView();
+      case 'Approvals': return renderApprovalsView();
+      default: return null;
     }
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="h-12 w-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+          <p className="text-slate-500 font-medium animate-pulse">Loading Sales MS...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-white rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
+          <div className="p-8 bg-blue-600 text-white text-center space-y-2">
+            <div className="h-16 w-16 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-4 backdrop-blur-md">
+              <Building2 className="h-8 w-8 text-white" />
+            </div>
+            <h1 className="text-2xl font-bold">Sales MS</h1>
+            <p className="text-blue-100 text-sm">Agricultural Equipment Management System</p>
+          </div>
+          
+          <form onSubmit={handleLogin} className="p-8 space-y-6">
+            {(authError || authMessage) && (
+              <div className={cn(
+                "p-3 border text-xs rounded-lg flex items-center gap-2 animate-in slide-in-from-top-2",
+                authError ? "bg-red-50 border-red-100 text-red-600" : "bg-emerald-50 border-emerald-100 text-emerald-600"
+              )}>
+                {authError ? <X className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
+                {authError || authMessage}
+              </div>
+            )}
+            
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2">
+                  <Mail className="h-3 w-3" />
+                  Email Address
+                </label>
+                <input 
+                  type="email" 
+                  required
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                  placeholder="admin@example.com"
+                  value={loginEmail}
+                  onChange={(e) => setLoginEmail(e.target.value)}
+                />
+              </div>
+              
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-2">
+                    <Lock className="h-3 w-3" />
+                    Password
+                  </label>
+                  <button 
+                    type="button"
+                    onClick={handleForgotPassword}
+                    className="text-[10px] font-bold text-blue-600 hover:underline"
+                  >
+                    Forgot Password?
+                  </button>
+                </div>
+                <input 
+                  type="password" 
+                  required
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none transition-all"
+                  placeholder="••••••••"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <button 
+              type="submit"
+              className="w-full py-4 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-600/20 flex items-center justify-center gap-2 group"
+            >
+              Sign In
+              <ChevronRight className="h-4 w-4 group-hover:translate-x-1 transition-transform" />
+            </button>
+            
+            <p className="text-center text-xs text-slate-400">
+              Contact administrator for account access.
+            </p>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 flex font-sans">
       {/* Sidebar */}
       <aside className={cn(
-        "bg-[#1e293b] text-white transition-all duration-300 flex flex-col",
+        "bg-[#1e293b] text-white transition-all duration-300 flex flex-col z-40",
         isSidebarOpen ? "w-64" : "w-20"
       )}>
         <div className="p-6 flex items-center justify-between">
@@ -1858,7 +2376,7 @@ export default function App() {
           </button>
         </div>
 
-        <nav className="flex-1 px-3 space-y-1">
+        <nav className="flex-1 px-3 space-y-1 overflow-y-auto">
           {menuItems.map((item) => (
             <button
               key={item.name}
@@ -1880,27 +2398,38 @@ export default function App() {
                 "h-5 w-5 shrink-0",
                 currentView === item.name ? "text-white" : "group-hover:text-white"
               )} />
-              {isSidebarOpen && <span className="text-xs md:text-sm font-medium">{item.name}</span>}
+              {isSidebarOpen && <span className="text-xs md:text-sm font-medium flex-1">{item.name}</span>}
+              {isSidebarOpen && item.badge && item.badge > 0 && (
+                <span className="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full animate-pulse">
+                  {item.badge}
+                </span>
+              )}
             </button>
           ))}
         </nav>
 
-        <div className="p-4 border-t border-slate-800">
-          {isSidebarOpen ? (
-            <div className="flex items-center gap-3">
-              <div className="h-8 w-8 rounded-full bg-blue-500 flex items-center justify-center font-bold text-xs">
-                AD
-              </div>
+        <div className="p-4 border-t border-slate-800 space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="h-8 w-8 rounded-full bg-blue-500 flex items-center justify-center font-bold text-xs shrink-0">
+              {userProfile?.name.charAt(0)}
+            </div>
+            {isSidebarOpen && (
               <div className="overflow-hidden">
-                <p className="text-xs font-semibold truncate">Admin User</p>
-                <p className="text-[10px] text-slate-500 truncate">admin@salesms.com</p>
+                <p className="text-xs font-semibold truncate">{userProfile?.name}</p>
+                <p className="text-[10px] text-slate-500 truncate">{userProfile?.email}</p>
               </div>
-            </div>
-          ) : (
-            <div className="h-8 w-8 rounded-full bg-blue-500 flex items-center justify-center font-bold text-xs mx-auto">
-              AD
-            </div>
-          )}
+            )}
+          </div>
+          <button 
+            onClick={handleLogout}
+            className={cn(
+              "w-full flex items-center gap-3 px-3 py-2 rounded-lg text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-all",
+              !isSidebarOpen && "justify-center"
+            )}
+          >
+            <LogOut className="h-4 w-4" />
+            {isSidebarOpen && <span className="text-xs font-bold uppercase tracking-wider">Logout</span>}
+          </button>
         </div>
       </aside>
 
@@ -1931,6 +2460,67 @@ export default function App() {
           </div>
         </div>
       </main>
+
+      {/* Add User Modal */}
+      {isAddUserModalOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md animate-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="text-xl font-bold text-slate-900">Add New User</h3>
+              <button onClick={() => setIsAddUserModalOpen(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+                <X className="h-5 w-5 text-slate-500" />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-500 uppercase">Full Name</label>
+                <input 
+                  type="text" 
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 outline-none"
+                  value={newUser.name}
+                  onChange={(e) => setNewUser({...newUser, name: e.target.value})}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-500 uppercase">Email Address</label>
+                <input 
+                  type="email" 
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 outline-none"
+                  value={newUser.email}
+                  onChange={(e) => setNewUser({...newUser, email: e.target.value})}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-500 uppercase">Role</label>
+                <select 
+                  className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500/20 outline-none"
+                  value={newUser.role}
+                  onChange={(e) => setNewUser({...newUser, role: e.target.value as any})}
+                >
+                  <option value="User">User</option>
+                  <option value="Admin">Admin</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-slate-100 flex gap-3 justify-end bg-slate-50 rounded-b-2xl">
+              <button 
+                onClick={() => setIsAddUserModalOpen(false)}
+                className="px-6 py-2 border border-slate-200 rounded-lg text-slate-600 font-medium hover:bg-slate-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleAddUser}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
+              >
+                Create User
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add Sale Modal */}
       {isAddSaleModalOpen && (

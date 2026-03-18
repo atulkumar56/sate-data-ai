@@ -40,6 +40,9 @@ export interface Sale {
   status: 'Pending' | 'Delivered' | 'Paid';
   followUpDate?: string;
   followUpRemark?: string;
+  verificationStatus: 'Pending' | 'Approved' | 'Rejected';
+  createdBy: string;
+  verifiedBy?: string;
 }
 
 export interface Payment {
@@ -51,6 +54,24 @@ export interface Payment {
   mode: 'Cash' | 'Bank' | 'Cheque' | 'Other';
   type: 'Customer' | 'Finance';
   remark: string;
+  verificationStatus: 'Pending' | 'Approved' | 'Rejected';
+  createdBy: string;
+  verifiedBy?: string;
 }
 
-export type ViewType = 'Dashboard' | 'Sale Data' | 'Delivered Data' | 'Debtor List' | 'Payment Received' | 'Old Tractor Data' | 'Master';
+export interface UserProfile {
+  id: string;
+  email: string;
+  name: string;
+  role: 'Admin' | 'User';
+  permissions: {
+    canAddSale: boolean;
+    canViewPayments: boolean;
+    canAddPayments: boolean;
+    canViewDebtors: boolean;
+    canViewOldTractors: boolean;
+    canManageMaster: boolean;
+  };
+}
+
+export type ViewType = 'Dashboard' | 'Sale Data' | 'Delivered Data' | 'Debtor List' | 'Payment Received' | 'Old Tractor Data' | 'Master' | 'Users' | 'Approvals';
