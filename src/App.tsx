@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Component } from 'react';
 import { 
   LayoutDashboard, 
   TableProperties, 
@@ -57,16 +57,128 @@ import {
   onSnapshot, 
   query, 
   where,
-  getDocs
+  getDocs,
+  deleteDoc,
+  updateDoc
 } from 'firebase/firestore';
 import { MOCK_SALES, MOCK_BRANCH_MANAGERS, MOCK_DEAL_PERSONS, MOCK_PRODUCTS, MOCK_FINANCE_COMPANIES, MOCK_CASE_TYPES } from './constants';
 import { Sale, ViewType, MasterItem, ProductMaster, SelectedProduct, Payment, UserProfile } from './types';
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | null | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | null | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+class ErrorBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean, error: any }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: any, errorInfo: any) {
+    console.error("ErrorBoundary caught an error", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      let errorMessage = "Something went wrong.";
+      try {
+        if (this.state.error && this.state.error.message) {
+          const parsedError = JSON.parse(this.state.error.message);
+          if (parsedError.error) {
+            errorMessage = `Firestore Error: ${parsedError.error} during ${parsedError.operationType} on ${parsedError.path}`;
+          }
+        }
+      } catch (e) {
+        errorMessage = this.state.error?.message || errorMessage;
+      }
+
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+          <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center">
+            <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+              <X className="h-8 w-8" />
+            </div>
+            <h2 className="text-2xl font-bold text-slate-900 mb-2">Application Error</h2>
+            <p className="text-slate-600 mb-6">{errorMessage}</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="w-full bg-blue-600 text-white py-3 rounded-xl font-semibold hover:bg-blue-700 transition-colors"
+            >
+              Reload Application
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 export default function App() {
+  return (
+    <ErrorBoundary>
+      <AppContent />
+    </ErrorBoundary>
+  );
+}
+
+function AppContent() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -81,7 +193,7 @@ export default function App() {
 
   const [currentView, setCurrentView] = useState<ViewType>('Dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [sales, setSales] = useState<Sale[]>(MOCK_SALES);
+  const [sales, setSales] = useState<Sale[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   
   // Master Data State
@@ -153,10 +265,75 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (user) {
+      let currentSales: Sale[] = [];
+      let currentPayments: Payment[] = [];
+
+      const updateComputedSales = (salesData: Sale[], paymentsData: Payment[]) => {
+        const computedSales = salesData.map(sale => {
+          const amount = Number(sale.amount) || 0;
+          const financeAmount = Number(sale.financeAmount) || 0;
+          const exchangeAmount = Number(sale.exchangeAmount) || 0;
+
+          const salePayments = paymentsData.filter(p => p.saleId === sale.id && p.verificationStatus === 'Approved');
+          const receivedAmount = salePayments
+            .filter(p => p.type === 'Customer')
+            .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+          const financeReceived = salePayments
+            .filter(p => p.type === 'Finance')
+            .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+          
+          return {
+            ...sale,
+            amount,
+            financeAmount,
+            exchangeAmount,
+            receivedAmount,
+            financeReceived
+          };
+        });
+        setSales(computedSales.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+      };
+
+      const salesUnsubscribe = onSnapshot(collection(db, 'sales'), (snapshot) => {
+        currentSales = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Sale));
+        updateComputedSales(currentSales, currentPayments);
+      }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'sales');
+      });
+
+      const paymentsUnsubscribe = onSnapshot(collection(db, 'payments'), (snapshot) => {
+        currentPayments = snapshot.docs.map(doc => {
+          const data = doc.data();
+          return { 
+            ...data, 
+            id: doc.id,
+            amount: Number(data.amount) || 0
+          } as Payment;
+        });
+        updateComputedSales(currentSales, currentPayments);
+        setPayments(currentPayments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+      }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'payments');
+      });
+
+      return () => {
+        salesUnsubscribe();
+        paymentsUnsubscribe();
+      };
+    } else {
+      setSales(MOCK_SALES);
+      setPayments([]);
+    }
+  }, [user]);
+
+  useEffect(() => {
     if (userProfile?.role === 'Admin') {
       const unsubscribe = onSnapshot(collection(db, 'users'), (snapshot) => {
         const usersData = snapshot.docs.map(doc => doc.data() as UserProfile);
         setAllUsers(usersData);
+      }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'users');
       });
       return () => unsubscribe();
     }
@@ -230,13 +407,14 @@ export default function App() {
     }
   };
 
-  const handleAddSale = () => {
+  const handleAddSale = async () => {
     if (!newSale.customerName || !newSale.branchManager) return;
 
     const dueDate = newSale.dueDate || calculateDueDate(newSale.date || new Date().toISOString().split('T')[0]);
+    const saleId = editingSaleId || Math.random().toString(36).substr(2, 9);
     const saleData: Sale = {
       ...(newSale as Sale),
-      id: editingSaleId || Math.random().toString(36).substr(2, 9),
+      id: saleId,
       status: newSale.status || 'Pending',
       date: newSale.date || new Date().toISOString().split('T')[0],
       dueDate,
@@ -249,14 +427,14 @@ export default function App() {
       receivedAmount: Number(newSale.receivedAmount) || 0,
     };
 
-    if (editingSaleId) {
-      setSales(sales.map(s => s.id === editingSaleId ? saleData : s));
-    } else {
-      setSales([saleData, ...sales]);
-      if (userProfile?.role !== 'Admin') {
+    try {
+      await setDoc(doc(db, 'sales', saleId), saleData);
+      if (!editingSaleId && userProfile?.role !== 'Admin') {
         setAuthMessage('Sale added and sent for Admin verification.');
         setTimeout(() => setAuthMessage(''), 5000);
       }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `sales/${saleId}`);
     }
 
     setIsAddSaleModalOpen(false);
@@ -285,13 +463,14 @@ export default function App() {
     });
   };
 
-  const handleAddOldTractorSale = () => {
+  const handleAddOldTractorSale = async () => {
     if (!newOldTractorSale.customerName || !newOldTractorSale.exchangeModel) return;
 
     const dueDate = newOldTractorSale.dueDate || calculateDueDate(newOldTractorSale.date || new Date().toISOString().split('T')[0]);
+    const saleId = Math.random().toString(36).substr(2, 9);
     const saleData: Sale = {
       ...(newOldTractorSale as Sale),
-      id: Math.random().toString(36).substr(2, 9),
+      id: saleId,
       isOldTractorSale: true,
       status: 'Pending',
       date: newOldTractorSale.date || new Date().toISOString().split('T')[0],
@@ -309,11 +488,16 @@ export default function App() {
       exchangeModel: newOldTractorSale.exchangeModel || '',
     };
 
-    setSales([saleData, ...sales]);
-    if (userProfile?.role !== 'Admin') {
-      setAuthMessage('Old tractor data added and sent for Admin verification.');
-      setTimeout(() => setAuthMessage(''), 5000);
+    try {
+      await setDoc(doc(db, 'sales', saleId), saleData);
+      if (userProfile?.role !== 'Admin') {
+        setAuthMessage('Old tractor data added and sent for Admin verification.');
+        setTimeout(() => setAuthMessage(''), 5000);
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `sales/${saleId}`);
     }
+
     setIsOldTractorModalOpen(false);
     setNewOldTractorSale({
       branchManager: '',
@@ -331,23 +515,29 @@ export default function App() {
     });
   };
 
-  const handleAddPayment = () => {
+  const handleAddPayment = async () => {
     if (!newPayment.amount || !newPayment.saleId) return;
 
+    const paymentId = Math.random().toString(36).substr(2, 9);
     const paymentData: Payment = {
       ...(newPayment as Payment),
-      id: Math.random().toString(36).substr(2, 9),
+      id: paymentId,
       date: newPayment.date || new Date().toISOString().split('T')[0],
       verificationStatus: userProfile?.role === 'Admin' ? 'Approved' : 'Pending',
       createdBy: user?.uid || 'system',
       amount: Number(newPayment.amount) || 0,
     };
 
-    setPayments([paymentData, ...payments]);
-    if (userProfile?.role !== 'Admin') {
-      setAuthMessage('Payment added and sent for Admin verification.');
-      setTimeout(() => setAuthMessage(''), 5000);
+    try {
+      await setDoc(doc(db, 'payments', paymentId), paymentData);
+      if (userProfile?.role !== 'Admin') {
+        setAuthMessage('Payment added and sent for Admin verification.');
+        setTimeout(() => setAuthMessage(''), 5000);
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `payments/${paymentId}`);
     }
+
     setIsPaymentModalOpen(false);
     setNewPayment({
       saleId: '',
@@ -360,19 +550,27 @@ export default function App() {
     });
   };
 
-  const handleApprove = (type: 'Sale' | 'Payment', id: string) => {
-    if (type === 'Sale') {
-      setSales(sales.map(s => s.id === id ? { ...s, verificationStatus: 'Approved', verifiedBy: user?.uid } : s));
-    } else {
-      setPayments(payments.map(p => p.id === id ? { ...p, verificationStatus: 'Approved', verifiedBy: user?.uid } : p));
+  const handleApprove = async (type: 'Sale' | 'Payment', id: string) => {
+    try {
+      const collectionName = type === 'Sale' ? 'sales' : 'payments';
+      await updateDoc(doc(db, collectionName, id), {
+        verificationStatus: 'Approved',
+        verifiedBy: user?.uid
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `${type === 'Sale' ? 'sales' : 'payments'}/${id}`);
     }
   };
 
-  const handleReject = (type: 'Sale' | 'Payment', id: string) => {
-    if (type === 'Sale') {
-      setSales(sales.map(s => s.id === id ? { ...s, verificationStatus: 'Rejected', verifiedBy: user?.uid } : s));
-    } else {
-      setPayments(payments.map(p => p.id === id ? { ...p, verificationStatus: 'Rejected', verifiedBy: user?.uid } : p));
+  const handleReject = async (type: 'Sale' | 'Payment', id: string) => {
+    try {
+      const collectionName = type === 'Sale' ? 'sales' : 'payments';
+      await updateDoc(doc(db, collectionName, id), {
+        verificationStatus: 'Rejected',
+        verifiedBy: user?.uid
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `${type === 'Sale' ? 'sales' : 'payments'}/${id}`);
     }
   };
 
@@ -542,8 +740,12 @@ export default function App() {
     document.body.removeChild(link);
   };
 
-  const handleDeleteSale = (id: string) => {
-    setSales(sales.filter(s => s.id !== id));
+  const handleDeleteSale = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'sales', id));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `sales/${id}`);
+    }
   };
 
   const handleDelivery = (id: string) => {
@@ -558,11 +760,18 @@ export default function App() {
     setIsDeliveryModalOpen(true);
   };
 
-  const confirmDelivery = () => {
+  const confirmDelivery = async () => {
     if (!deliverySaleId) return;
-    setSales(sales.map(s => s.id === deliverySaleId ? { ...s, status: 'Delivered', deliveryDate: deliveryDateInput } : s));
-    setIsDeliveryModalOpen(false);
-    setDeliverySaleId(null);
+    try {
+      await updateDoc(doc(db, 'sales', deliverySaleId), {
+        status: 'Delivered',
+        deliveryDate: deliveryDateInput
+      });
+      setIsDeliveryModalOpen(false);
+      setDeliverySaleId(null);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `sales/${deliverySaleId}`);
+    }
   };
 
   const renderMasterView = () => {
@@ -835,22 +1044,19 @@ export default function App() {
     );
   };
 
-  const handleSaveFollowUp = () => {
+  const handleSaveFollowUp = async () => {
     if (!followUpData.saleId) return;
 
-    setSales(sales.map(s => {
-      if (s.id === followUpData.saleId) {
-        return {
-          ...s,
-          followUpDate: followUpData.date,
-          followUpRemark: followUpData.remark
-        };
-      }
-      return s;
-    }));
-
-    setIsFollowUpModalOpen(false);
-    setFollowUpData({ saleId: '', date: '', remark: '' });
+    try {
+      await updateDoc(doc(db, 'sales', followUpData.saleId), {
+        followUpDate: followUpData.date,
+        followUpRemark: followUpData.remark
+      });
+      setIsFollowUpModalOpen(false);
+      setFollowUpData({ saleId: '', date: '', remark: '' });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `sales/${followUpData.saleId}`);
+    }
   };
 
   const renderDashboard = () => {

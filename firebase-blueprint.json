@@ -14,7 +14,7 @@
           "properties": {
             "canAddSale": { "type": "boolean" },
             "canViewPayments": { "type": "boolean" },
-            "canAddPayments: { "type": "boolean" },
+            "canAddPayments": { "type": "boolean" },
             "canViewDebtors": { "type": "boolean" },
             "canViewOldTractors": { "type": "boolean" },
             "canManageMaster": { "type": "boolean" }
@@ -22,12 +22,75 @@
         }
       },
       "required": ["id", "email", "name", "role", "permissions"]
+    },
+    "Sale": {
+      "title": "Sale",
+      "description": "Stores sale information.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "branchManager": { "type": "string" },
+        "dealPerson": { "type": "string" },
+        "customerName": { "type": "string" },
+        "mobile": { "type": "string" },
+        "address": { "type": "string" },
+        "selectedProducts": { "type": "array" },
+        "case": { "type": "string" },
+        "finance": { "type": "boolean" },
+        "financeCompany": { "type": "string" },
+        "amount": { "type": "number" },
+        "exchange": { "type": "boolean" },
+        "exchangeModel": { "type": "string" },
+        "exchangeAmount": { "type": "number" },
+        "financeAmount": { "type": "number" },
+        "financeReceived": { "type": "number" },
+        "receivedAmount": { "type": "number" },
+        "remark": { "type": "string" },
+        "date": { "type": "string" },
+        "deliveryDate": { "type": "string" },
+        "dueDate": { "type": "string" },
+        "isOldTractorSale": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["Pending", "Delivered", "Paid"] },
+        "followUpDate": { "type": "string" },
+        "followUpRemark": { "type": "string" },
+        "verificationStatus": { "type": "string", "enum": ["Pending", "Approved", "Rejected"] },
+        "createdBy": { "type": "string" },
+        "verifiedBy": { "type": "string" }
+      },
+      "required": ["id", "customerName", "amount", "status", "verificationStatus", "createdBy"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "Stores payment information.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "saleId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "amount": { "type": "number" },
+        "date": { "type": "string" },
+        "mode": { "type": "string", "enum": ["Cash", "Bank", "Cheque", "Other"] },
+        "type": { "type": "string", "enum": ["Customer", "Finance"] },
+        "remark": { "type": "string" },
+        "verificationStatus": { "type": "string", "enum": ["Pending", "Approved", "Rejected"] },
+        "createdBy": { "type": "string" },
+        "verifiedBy": { "type": "string" }
+      },
+      "required": ["id", "saleId", "amount", "verificationStatus", "createdBy"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "UserProfile",
       "description": "Collection of user profiles."
+    },
+    "/sales/{saleId}": {
+      "schema": "Sale",
+      "description": "Collection of sales."
+    },
+    "/payments/{paymentId}": {
+      "schema": "Payment",
+      "description": "Collection of payments."
     }
   }
 }

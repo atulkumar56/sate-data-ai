@@ -31,17 +31,41 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Admin' ||
           (request.auth.token.email == "funnyatul3@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasPermission(permission) {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.permissions[permission] == true || isAdmin());
     }
 
     function isValidUser(data) {
       return data.keys().hasAll(['id', 'email', 'name', 'role', 'permissions']) &&
-             data.id is string && data.id.size() > 0 &&
-             data.email is string && data.email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$") &&
+             data.id is string &&
+             data.email is string &&
              data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
              data.role in ['Admin', 'User'] &&
              data.permissions is map;
+    }
+
+    function isValidSale(data) {
+      return data.keys().hasAll(['id', 'customerName', 'amount', 'status', 'verificationStatus', 'createdBy']) &&
+             data.id is string &&
+             data.customerName is string && data.customerName.size() > 0 && data.customerName.size() < 100 &&
+             data.amount is number &&
+             data.status in ['Pending', 'Delivered', 'Paid'] &&
+             data.verificationStatus in ['Pending', 'Approved', 'Rejected'] &&
+             data.createdBy is string;
+    }
+
+    function isValidPayment(data) {
+      return data.keys().hasAll(['id', 'saleId', 'amount', 'verificationStatus', 'createdBy']) &&
+             data.id is string &&
+             data.saleId is string &&
+             data.amount is number &&
+             data.verificationStatus in ['Pending', 'Approved', 'Rejected'] &&
+             data.createdBy is string;
     }
 
     // ===============================================================
@@ -62,6 +86,28 @@ service cloud.firestore {
                                      isValidUser(request.resource.data) && 
                                      request.resource.data.role == resource.data.role &&
                                      request.resource.data.permissions == resource.data.permissions);
+    }
+
+    match /sales/{saleId} {
+      allow read: if isAuthenticated();
+      allow create: if hasPermission('canAddSale') && isValidSale(request.resource.data) && 
+                      (request.resource.data.verificationStatus == 'Pending' || isAdmin());
+      allow update: if isAdmin() || (hasPermission('canAddSale') && 
+                                     isValidSale(request.resource.data) && 
+                                     request.resource.data.verificationStatus == resource.data.verificationStatus &&
+                                     resource.data.verificationStatus == 'Pending');
+      allow delete: if isAdmin();
+    }
+
+    match /payments/{paymentId} {
+      allow read: if isAuthenticated();
+      allow create: if hasPermission('canAddPayments') && isValidPayment(request.resource.data) && 
+                      (request.resource.data.verificationStatus == 'Pending' || isAdmin());
+      allow update: if isAdmin() || (hasPermission('canAddPayments') && 
+                                     isValidPayment(request.resource.data) && 
+                                     request.resource.data.verificationStatus == resource.data.verificationStatus &&
+                                     resource.data.verificationStatus == 'Pending');
+      allow delete: if isAdmin();
     }
 
     // Default deny
